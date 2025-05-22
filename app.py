@@ -1,5 +1,6 @@
 from typing import Any
 
+import bcrypt
 from flask import Flask, request, jsonify, Response
 from flask_login import LoginManager, login_user, current_user, logout_user, login_required
 
@@ -8,7 +9,7 @@ from models.user import User
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:root@127.0.0.1:3306/flask-crud'
 
 login_manager = LoginManager()
 db.init_app(app)
@@ -29,25 +30,26 @@ def login() -> Response | tuple[Response, int]:
     if username and password:
         user: User = User.query.filter_by(username=username).first()
 
-        if user and user.password == password:
+        if user and bcrypt.checkpw(str.encode(password), str.encode(user.password)):
             login_user(user)
             print(current_user.is_authenticated)
-            return create_response('Autenticação realizada com sucesso', None)
+            return create_response('Autenticação realizada com sucesso')
 
     return create_response('Credenciais inválidas', 400)
 
 @app.post('/user')
-@login_required
+# @login_required
 def create_user() -> Response | tuple[Response, int]:
     data: Any = request.json
     username: str = data.get('username')
     password: str = data.get('password')
 
     if username and password:
-        user: User = User(username=username, password=password)
+        hashed_password = bcrypt.hashpw(str.encode(password), bcrypt.gensalt())
+        user: User = User(username=username, password=hashed_password, role='user')
         db.session.add(user)
         db.session.commit()
-        return create_response('Usuário cadastrado com sucesso!', None)
+        return create_response('Usuário cadastrado com sucesso!')
 
     return create_response('Dados inválidos', 400)
 
@@ -67,6 +69,9 @@ def read_user(id_user) -> Response:
 def update_user(id_user) -> Response:
     user: User = User.query.get(id_user)
 
+    if id_user == current_user.id or current_user.role == 'user':
+        return create_response('Operação não permitida', 403)
+
     if user:
         data: Any = request.json
         password: str = data.get('password')
@@ -76,7 +81,7 @@ def update_user(id_user) -> Response:
             user.password = password
             db.session.commit()
 
-            return create_response('Usuário foi atualizado com sucesso!', None)
+            return create_response('Usuário foi atualizado com sucesso!')
         else:
             return create_response('Request inválido!', 400)
 
@@ -87,13 +92,13 @@ def update_user(id_user) -> Response:
 def delete_user(id_user) -> Response:
     user: User = User.query.get(id_user)
 
-    if id_user == current_user.id:
-        return create_response('Deleção não permitida!', 403)
+    if id_user == current_user.id or current_user.role == 'user':
+        return create_response('Operação não permitida', 403)
 
     if user:
         db.session.delete(user)
         db.session.commit()
-        return create_response('Usuário foi deletado com sucesso!', None)
+        return create_response('Usuário foi deletado com sucesso!')
 
     return create_response('Usuário não foi encontrado!', 404)
 
@@ -104,7 +109,7 @@ def logout() -> Response:
     logout_user()
     return create_response('Logout realizado com sucesso!', None)
 
-def create_response(message: str, status: int | None) -> tuple[Response, int] | Response:
+def create_response(message: str, status: int = None) -> tuple[Response, int] | Response:
     response: Response = jsonify({'message': message})
     return (response, status) if status else response
 
